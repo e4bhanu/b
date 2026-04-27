@@ -178,12 +178,23 @@ class CameraSource:
         except ModuleNotFoundError:
             return False
 
-        self._picam2 = Picamera2()
-        config = self._picam2.create_preview_configuration(
-            main={"size": (self.width, self.height), "format": "RGB888"}
-        )
-        self._picam2.configure(config)
-        self._picam2.start()
+        picam2 = None
+        try:
+            picam2 = Picamera2()
+            config = picam2.create_preview_configuration(
+                main={"size": (self.width, self.height), "format": "RGB888"}
+            )
+            picam2.configure(config)
+            picam2.start()
+        except Exception:
+            if picam2 is not None:
+                try:
+                    picam2.close()
+                except Exception:
+                    pass
+            return False
+
+        self._picam2 = picam2
         self.backend = "Picamera2"
         return True
 
@@ -221,7 +232,10 @@ class CameraSource:
     def stop(self) -> None:
         with self._lock:
             if self._picam2 is not None:
-                self._picam2.stop()
+                try:
+                    self._picam2.stop()
+                finally:
+                    self._picam2.close()
                 self._picam2 = None
             if self._capture is not None:
                 self._capture.release()
@@ -525,7 +539,6 @@ class StepperCameraGui(tk.Tk):
 
         def worker() -> None:
             try:
-                self.preview_camera.stop()
                 rgb_frame, depth_frame = self.realsense_camera.capture_rgb_and_depth()
             except Exception as exc:
                 self.after(0, lambda: messagebox.showerror("RealSense error", str(exc)))
@@ -533,7 +546,6 @@ class StepperCameraGui(tk.Tk):
             else:
                 self.after(0, lambda: self._display_realsense_images(rgb_frame, depth_frame))
             finally:
-                self.preview_camera.start()
                 self.after(0, self._clear_capture_busy)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -555,12 +567,13 @@ class StepperCameraGui(tk.Tk):
         self._capturing = False
 
     def _update_camera(self) -> None:
-        if self._capturing:
-            self.preview_label.configure(text="Live feed paused during RealSense capture", image="")
-            self.after(50, self._update_camera)
+        try:
+            frame = self.preview_camera.read_rgb_frame()
+        except Exception as exc:
+            self.preview_label.configure(text=f"Live camera error: {exc}", image="")
+            self.after(500, self._update_camera)
             return
 
-        frame = self.preview_camera.read_rgb_frame()
         if frame is None:
             self.preview_label.configure(text="No live camera feed available")
         else:
