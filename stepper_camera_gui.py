@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Tkinter GUI for controlling two Raspberry Pi stepper motors and capturing Intel
-RealSense RGB/depth images on demand.
+Tkinter GUI for controlling two Raspberry Pi stepper motors while viewing a
+normal camera feed and capturing Intel RealSense RGB/depth images on demand.
 
 The GPIO behavior mirrors the original open-collector style script:
   - DIR/PUL opto input ON  = drive pin LOW
   - DIR/PUL opto input OFF = configure pin as input (Hi-Z)
 
 Camera support:
-  - Intel RealSense RGB and depth snapshots through pyrealsense2.
-  - No live camera feed is polled; images update only when the capture button is clicked.
+  - Picamera2 is used for the live preview when available.
+  - OpenCV VideoCapture(0) is used as a live-preview fallback.
+  - Intel RealSense RGB and depth snapshots are captured through pyrealsense2
+    only when the capture button is clicked.
 
 Run on the Raspberry Pi with:
     python3 stepper_camera_gui.py
@@ -149,6 +151,84 @@ class StepperController:
         GPIO.cleanup()
 
 
+class CameraSource:
+    """Live camera wrapper that prefers Picamera2 and falls back to OpenCV."""
+
+    def __init__(self, width: int = 640, height: int = 480) -> None:
+        self.width = width
+        self.height = height
+        self.backend = "disabled"
+        self._picam2 = None
+        self._capture = None
+        self._cv2 = None
+        self._lock = threading.Lock()
+
+        self.start()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._picam2 is not None or self._capture is not None:
+                return
+            self.backend = "disabled"
+            self._start_picamera2() or self._start_opencv()
+
+    def _start_picamera2(self) -> bool:
+        try:
+            from picamera2 import Picamera2  # type: ignore
+        except ModuleNotFoundError:
+            return False
+
+        self._picam2 = Picamera2()
+        config = self._picam2.create_preview_configuration(
+            main={"size": (self.width, self.height), "format": "RGB888"}
+        )
+        self._picam2.configure(config)
+        self._picam2.start()
+        self.backend = "Picamera2"
+        return True
+
+    def _start_opencv(self) -> bool:
+        try:
+            import cv2  # type: ignore
+        except ModuleNotFoundError:
+            return False
+
+        capture = cv2.VideoCapture(0)
+        if not capture.isOpened():
+            capture.release()
+            return False
+
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self._cv2 = cv2
+        self._capture = capture
+        self.backend = "OpenCV"
+        return True
+
+    def read_rgb_frame(self):
+        with self._lock:
+            if self._picam2 is not None:
+                return self._picam2.capture_array()
+
+            if self._capture is not None and self._cv2 is not None:
+                ok, frame = self._capture.read()
+                if not ok:
+                    return None
+                return self._cv2.cvtColor(frame, self._cv2.COLOR_BGR2RGB)
+
+            return None
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._picam2 is not None:
+                self._picam2.stop()
+                self._picam2 = None
+            if self._capture is not None:
+                self._capture.release()
+                self._capture = None
+            self.backend = "disabled"
+
+
 class RealSenseCamera:
     """Captures one RGB frame and one colorized depth frame from a RealSense camera."""
 
@@ -227,7 +307,9 @@ class StepperCameraGui(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.controller = StepperController()
-        self.camera = RealSenseCamera()
+        self.preview_camera = CameraSource()
+        self.realsense_camera = RealSenseCamera()
+        self._preview_image: Optional[tk.PhotoImage] = None
         self._rgb_image: Optional[tk.PhotoImage] = None
         self._depth_image: Optional[tk.PhotoImage] = None
         self._capturing = False
@@ -238,10 +320,11 @@ class StepperCameraGui(tk.Tk):
         self.gap_var = tk.StringVar(value=str(DEFAULT_GAP_US))
 
         self._build_ui()
+        self.after(50, self._update_camera)
 
     def _initial_status(self) -> str:
         gpio_state = "GPIO ready" if GPIO_AVAILABLE else "GPIO not found; simulation mode"
-        camera_state = "Camera: Intel RealSense snapshot mode"
+        camera_state = f"Live camera: {self.preview_camera.backend}. RealSense snapshot ready"
         return f"{gpio_state}. {camera_state}."
 
     def _build_ui(self) -> None:
@@ -250,29 +333,38 @@ class StepperCameraGui(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        camera_frame = ttk.LabelFrame(root, text="Intel RealSense Camera")
+        camera_frame = ttk.LabelFrame(root, text="Camera")
         camera_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
+
+        live_frame = ttk.LabelFrame(camera_frame, text="Live Camera Feed")
+        live_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=8, pady=(8, 4))
+
+        self.preview_label = ttk.Label(live_frame, text="Starting camera...", anchor="center")
+        self.preview_label.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        live_frame.columnconfigure(0, weight=1)
+        live_frame.rowconfigure(0, weight=1)
 
         ttk.Button(
             camera_frame,
             text="Capture RealSense Images",
             command=self.capture_realsense_images,
-        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
 
-        ttk.Label(camera_frame, text="RGB").grid(row=1, column=0, padx=8, pady=(4, 0))
-        ttk.Label(camera_frame, text="Depth").grid(row=1, column=1, padx=8, pady=(4, 0))
+        ttk.Label(camera_frame, text="RealSense RGB").grid(row=2, column=0, padx=8, pady=(4, 0))
+        ttk.Label(camera_frame, text="RealSense Depth").grid(row=2, column=1, padx=8, pady=(4, 0))
 
         self.rgb_label = ttk.Label(camera_frame, text="Click capture to show RGB image", anchor="center")
-        self.rgb_label.grid(row=2, column=0, sticky="nsew", padx=8, pady=8)
+        self.rgb_label.grid(row=3, column=0, sticky="nsew", padx=8, pady=8)
 
         self.depth_label = ttk.Label(camera_frame, text="Click capture to show depth image", anchor="center")
-        self.depth_label.grid(row=2, column=1, sticky="nsew", padx=8, pady=8)
+        self.depth_label.grid(row=3, column=1, sticky="nsew", padx=8, pady=8)
 
         camera_frame.columnconfigure(0, weight=1)
         camera_frame.columnconfigure(1, weight=1)
-        camera_frame.rowconfigure(2, weight=1)
+        camera_frame.rowconfigure(0, weight=2)
+        camera_frame.rowconfigure(3, weight=1)
 
         controls = ttk.Frame(root)
         controls.grid(row=0, column=1, sticky="new")
@@ -433,13 +525,15 @@ class StepperCameraGui(tk.Tk):
 
         def worker() -> None:
             try:
-                rgb_frame, depth_frame = self.camera.capture_rgb_and_depth()
+                self.preview_camera.stop()
+                rgb_frame, depth_frame = self.realsense_camera.capture_rgb_and_depth()
             except Exception as exc:
                 self.after(0, lambda: messagebox.showerror("RealSense error", str(exc)))
                 self.after(0, lambda: self.status_var.set(f"RealSense error: {exc}"))
             else:
                 self.after(0, lambda: self._display_realsense_images(rgb_frame, depth_frame))
             finally:
+                self.preview_camera.start()
                 self.after(0, self._clear_capture_busy)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -460,7 +554,26 @@ class StepperCameraGui(tk.Tk):
     def _clear_capture_busy(self) -> None:
         self._capturing = False
 
+    def _update_camera(self) -> None:
+        if self._capturing:
+            self.preview_label.configure(text="Live feed paused during RealSense capture", image="")
+            self.after(50, self._update_camera)
+            return
+
+        frame = self.preview_camera.read_rgb_frame()
+        if frame is None:
+            self.preview_label.configure(text="No live camera feed available")
+        else:
+            try:
+                self._preview_image = tk.PhotoImage(data=rgb_frame_to_ppm(frame), format="PPM")
+                self.preview_label.configure(image=self._preview_image, text="")
+            except tk.TclError as exc:
+                self.preview_label.configure(text=f"Live camera display error: {exc}")
+
+        self.after(50, self._update_camera)
+
     def on_close(self) -> None:
+        self.preview_camera.stop()
         self.controller.cleanup()
         self.destroy()
 
