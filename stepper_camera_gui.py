@@ -250,8 +250,18 @@ class RealSenseCamera:
         self.width = width
         self.height = height
         self.fps = fps
+        self._lock = threading.Lock()
+        self._np = None
+        self._rs = None
+        self._pipeline = None
+        self._align = None
+        self._colorizer = None
+        self._started = False
+        self._warmed_up = False
 
-    def capture_rgb_and_depth(self):
+    def _load_dependencies(self) -> None:
+        if self._np is not None and self._rs is not None:
+            return
         try:
             import numpy as np  # type: ignore
             import pyrealsense2 as rs  # type: ignore
@@ -261,42 +271,93 @@ class RealSenseCamera:
                 "Install the Intel RealSense SDK Python package on the Raspberry Pi."
             ) from exc
 
-        pipeline = rs.pipeline()
+        self._np = np
+        self._rs = rs
+
+    def _start(self) -> None:
+        self._load_dependencies()
+        if self._started:
+            return
+
+        rs = self._rs
+        assert rs is not None
+
+        self._pipeline = rs.pipeline()
         config = rs.config()
         config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
         config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
 
-        started = False
+        self._pipeline.start(config)
+        self._align = rs.align(rs.stream.color)
+        self._colorizer = rs.colorizer()
+        self._started = True
+        self._warmed_up = False
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stop_unlocked()
+
+    def _stop_unlocked(self) -> None:
+        if self._pipeline is not None and self._started:
+            self._pipeline.stop()
+        self._pipeline = None
+        self._align = None
+        self._colorizer = None
+        self._started = False
+        self._warmed_up = False
+
+    def _capture_once(self):
+        np = self._np
+        rs = self._rs
+        assert np is not None
+        assert rs is not None
+        assert self._pipeline is not None
+        assert self._align is not None
+        assert self._colorizer is not None
+
+        frames = None
+        frame_count = 8 if not self._warmed_up else 1
+        # Use a longer timeout than the default 5000 ms; RealSense devices can
+        # take longer to deliver frames after USB/pipeline hiccups.
+        for _ in range(frame_count):
+            frames = self._align.process(self._pipeline.wait_for_frames(10000))
+
+        self._warmed_up = True
+        if frames is None:
+            raise RuntimeError("No frames received from the RealSense camera.")
+
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+        if not color_frame or not depth_frame:
+            raise RuntimeError("RealSense did not return both RGB and depth frames.")
+
+        rgb_frame = np.asanyarray(color_frame.get_data()).copy()
+        depth_color_frame = self._colorizer.colorize(depth_frame)
+        depth_frame_rgb = np.asanyarray(depth_color_frame.get_data()).copy()
+
+        if depth_color_frame.get_profile().format() == rs.format.bgr8:
+            depth_frame_rgb = depth_frame_rgb[:, :, ::-1]
+
+        return rgb_frame, depth_frame_rgb
+
+    def capture_rgb_and_depth(self):
+        with self._lock:
+            self._start()
+            try:
+                return self._capture_once()
+            except Exception:
+                # If the pipeline stalls, restart only the RealSense pipeline
+                # and retry once. This avoids repeated button clicks getting
+                # stuck after a transient "frame didn't arrive" timeout.
+                self._stop_unlocked()
+                self._start()
+                return self._capture_once()
+
+    def __del__(self) -> None:
         try:
-            pipeline.start(config)
-            started = True
-            align = rs.align(rs.stream.color)
-            colorizer = rs.colorizer()
-
-            frames = None
-            # Discard a few initial frames so auto-exposure has a chance to settle.
-            for _ in range(8):
-                frames = align.process(pipeline.wait_for_frames())
-
-            if frames is None:
-                raise RuntimeError("No frames received from the RealSense camera.")
-
-            color_frame = frames.get_color_frame()
-            depth_frame = frames.get_depth_frame()
-            if not color_frame or not depth_frame:
-                raise RuntimeError("RealSense did not return both RGB and depth frames.")
-
-            rgb_frame = np.asanyarray(color_frame.get_data()).copy()
-            depth_color_frame = colorizer.colorize(depth_frame)
-            depth_frame_rgb = np.asanyarray(depth_color_frame.get_data()).copy()
-
-            if depth_color_frame.get_profile().format() == rs.format.bgr8:
-                depth_frame_rgb = depth_frame_rgb[:, :, ::-1]
-
-            return rgb_frame, depth_frame_rgb
-        finally:
-            if started:
-                pipeline.stop()
+            self.stop()
+        except Exception:
+            pass
 
 
 def rgb_frame_to_ppm(frame) -> bytes:
@@ -517,8 +578,9 @@ class StepperCameraGui(tk.Tk):
             try:
                 action()
             except Exception as exc:  # Keep GPIO worker errors visible in the GUI.
-                self.after(0, lambda: messagebox.showerror("Motor error", str(exc)))
-                self.after(0, lambda: self.status_var.set(f"Error: {exc}"))
+                error_message = str(exc)
+                self.after(0, lambda: messagebox.showerror("Motor error", error_message))
+                self.after(0, lambda: self.status_var.set(f"Error: {error_message}"))
             else:
                 self.after(0, lambda: self.status_var.set(f"Done. {description}"))
             finally:
@@ -541,8 +603,9 @@ class StepperCameraGui(tk.Tk):
             try:
                 rgb_frame, depth_frame = self.realsense_camera.capture_rgb_and_depth()
             except Exception as exc:
-                self.after(0, lambda: messagebox.showerror("RealSense error", str(exc)))
-                self.after(0, lambda: self.status_var.set(f"RealSense error: {exc}"))
+                error_message = str(exc)
+                self.after(0, lambda: messagebox.showerror("RealSense error", error_message))
+                self.after(0, lambda: self.status_var.set(f"RealSense error: {error_message}"))
             else:
                 self.after(0, lambda: self._display_realsense_images(rgb_frame, depth_frame))
             finally:
@@ -586,6 +649,7 @@ class StepperCameraGui(tk.Tk):
         self.after(50, self._update_camera)
 
     def on_close(self) -> None:
+        self.realsense_camera.stop()
         self.preview_camera.stop()
         self.controller.cleanup()
         self.destroy()
