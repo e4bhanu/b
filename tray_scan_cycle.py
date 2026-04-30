@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run one full 8-tray scan cycle for a 2-axis Raspberry Pi motion system.
+Run full 8-tray scan cycles for a 2-axis Raspberry Pi motion system.
 
 System layout:
   - X axis: 2 tray columns
@@ -17,8 +17,8 @@ Scan order is column-wise:
   Tray 7: X1, Y1
   Tray 8: X1, Y0
 
-This second-column reverse-Y scan leaves Y at home at the end. After all
-captures, only X is homed.
+This second-column reverse-Y scan returns Y to the starting row. Limit-switch
+homing is currently disabled so the rest of the scan cycle can be tested.
 
 Run on the Raspberry Pi with:
     python3 tray_scan_cycle.py
@@ -58,20 +58,6 @@ Y_ROWS = 4
 # Home is max CW.
 HOME_DIRECTION = "cw"
 AWAY_FROM_HOME_DIRECTION = "ccw"
-
-# Safety thresholds for homing. These are intentionally larger than the normal
-# travel needed for this 2 x 4 tray grid.
-X_HOME_MAX_STEPS = 100_000
-Y_HOME_MAX_STEPS = 1_600_000
-
-# The request specifies: switch triggered == GPIO HIGH (1).
-LIMIT_TRIGGERED_STATE = 1
-
-# When moving away from home, the home switch can remain triggered or bounce
-# briefly while the axis clears the switch. Safety monitoring starts after the
-# switch has been released for a small number of consecutive steps.
-HOME_SWITCH_RELEASE_DEBOUNCE_STEPS = 50
-HOME_SWITCH_CLEARANCE_MAX_STEPS = 50_000
 
 SCAN_INTERVAL_SECONDS = 60 * 60
 
@@ -160,8 +146,7 @@ def setup_gpio() -> None:
     for pin in (M1_PUL, M1_DIR, M2_PUL, M2_DIR):
         hi_z(pin)
 
-    GPIO.setup(X_HOME_SWITCH, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.setup(Y_HOME_SWITCH, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    # Limit-switch setup is intentionally omitted while homing is disabled.
 
 
 class MotionSafetyError(RuntimeError):
@@ -463,24 +448,14 @@ class TrayScanner:
     def move_x_steps(self, steps: int) -> None:
         direction = AWAY_FROM_HOME_DIRECTION if steps >= 0 else HOME_DIRECTION
         print(f"Moving X {abs(steps)} steps {direction}")
-        self._step_axis_monitored(
-            "x",
-            abs(steps),
-            direction,
-            stop_on_home=False,
-            allow_initial_home_clear=(direction == AWAY_FROM_HOME_DIRECTION),
-        )
+        set_dir(M1_DIR, direction)
+        step_pulses(M1_PUL, abs(steps))
 
     def move_y_steps(self, steps: int, *, stop_on_home: bool = False) -> None:
         direction = AWAY_FROM_HOME_DIRECTION if steps >= 0 else HOME_DIRECTION
         print(f"Moving Y {abs(steps)} steps {direction}")
-        self._step_axis_monitored(
-            "y",
-            abs(steps),
-            direction,
-            stop_on_home=stop_on_home,
-            allow_initial_home_clear=(direction == AWAY_FROM_HOME_DIRECTION),
-        )
+        set_dir(M2_DIR, direction)
+        step_pulses(M2_PUL, abs(steps))
 
     def home_x(self) -> None:
         print("Homing X...")
@@ -526,9 +501,7 @@ class TrayScanner:
 
     def run_scan_cycle(self) -> None:
         self.tray_number = 0
-        print("Starting scan cycle.")
-        self.home_x()
-        self.home_y()
+        print("Starting scan cycle from current assumed X0/Y0 position.")
 
         self.scan_tray(0, 0)
         for y_index in range(1, Y_ROWS):
@@ -539,14 +512,11 @@ class TrayScanner:
         self.scan_tray(1, Y_ROWS - 1)
 
         for y_index in range(Y_ROWS - 2, -1, -1):
-            self.move_y_steps(-Y_STEPS_BETWEEN_TRAYS, stop_on_home=(y_index == 0))
+            self.move_y_steps(-Y_STEPS_BETWEEN_TRAYS)
             self.scan_tray(1, y_index)
 
-        if not limit_triggered(Y_HOME_SWITCH):
-            raise MotionSafetyError("Y axis is not at home after the final tray.")
-
-        self.home_x()
-        print("Scan cycle complete.")
+        self.move_x_steps(-X_STEPS_PER_TRAY)
+        print("Scan cycle complete; returned to assumed X0/Y0 by step count.")
 
 
 def parse_args() -> argparse.Namespace:
