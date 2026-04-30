@@ -67,6 +67,12 @@ Y_HOME_MAX_STEPS = 1_600_000
 # The request specifies: switch triggered == GPIO HIGH (1).
 LIMIT_TRIGGERED_STATE = 1
 
+# When moving away from home, the home switch can remain triggered or bounce
+# briefly while the axis clears the switch. Safety monitoring starts after the
+# switch has been released for a small number of consecutive steps.
+HOME_SWITCH_RELEASE_DEBOUNCE_STEPS = 50
+HOME_SWITCH_CLEARANCE_MAX_STEPS = 50_000
+
 SCAN_INTERVAL_SECONDS = 60 * 60
 
 
@@ -400,7 +406,8 @@ class TrayScanner:
         _, _, other_switch_pin = self._axis_pins(other_axis)
         set_dir(dir_pin, direction)
 
-        released_after_start = not limit_triggered(switch_pin)
+        clearing_initial_home_switch = allow_initial_home_clear and not stop_on_home
+        release_clear_count = 0
         other_switch_was_triggered = limit_triggered(other_switch_pin)
         pulse_delay = PULSE_US / 1_000_000
         gap_delay = GAP_US / 1_000_000
@@ -418,16 +425,24 @@ class TrayScanner:
                 return completed_steps
 
             if not stop_on_home:
-                if switch_is_triggered:
-                    if allow_initial_home_clear and not released_after_start:
-                        pass
+                if clearing_initial_home_switch:
+                    if switch_is_triggered:
+                        release_clear_count = 0
+                        if completed_steps >= HOME_SWITCH_CLEARANCE_MAX_STEPS:
+                            hi_z(pul_pin)
+                            raise MotionSafetyError(
+                                f"{axis.upper()} home switch did not release within "
+                                f"{HOME_SWITCH_CLEARANCE_MAX_STEPS} steps while moving away."
+                            )
                     else:
-                        hi_z(pul_pin)
-                        raise MotionSafetyError(
-                            f"{axis.upper()} home switch triggered unexpectedly during move."
-                        )
-                else:
-                    released_after_start = True
+                        release_clear_count += 1
+                        if release_clear_count >= HOME_SWITCH_RELEASE_DEBOUNCE_STEPS:
+                            clearing_initial_home_switch = False
+                elif switch_is_triggered:
+                    hi_z(pul_pin)
+                    raise MotionSafetyError(
+                        f"{axis.upper()} home switch triggered unexpectedly during move."
+                    )
 
             drive_low(pul_pin)
             time.sleep(pulse_delay)
