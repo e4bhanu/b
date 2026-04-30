@@ -394,14 +394,23 @@ class TrayScanner:
         allow_initial_home_clear: bool = False,
     ) -> int:
         pul_pin, dir_pin, switch_pin = self._axis_pins(axis)
+        other_axis = "y" if axis == "x" else "x"
+        _, _, other_switch_pin = self._axis_pins(other_axis)
         set_dir(dir_pin, direction)
 
         released_after_start = not limit_triggered(switch_pin)
+        other_switch_was_triggered = limit_triggered(other_switch_pin)
         pulse_delay = PULSE_US / 1_000_000
         gap_delay = GAP_US / 1_000_000
 
         for completed_steps in range(steps):
             switch_is_triggered = limit_triggered(switch_pin)
+            if limit_triggered(other_switch_pin) and not other_switch_was_triggered:
+                hi_z(pul_pin)
+                raise MotionSafetyError(
+                    f"{other_axis.upper()} home switch triggered unexpectedly during {axis.upper()} move."
+                )
+
             if stop_on_home and switch_is_triggered:
                 hi_z(pul_pin)
                 return completed_steps
