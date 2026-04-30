@@ -67,6 +67,8 @@ Y_HOME_MAX_STEPS = 1_600_000
 # The request specifies: switch triggered == GPIO HIGH (1).
 LIMIT_TRIGGERED_STATE = 1
 
+SCAN_INTERVAL_SECONDS = 60 * 60
+
 
 try:
     import RPi.GPIO as GPIO  # type: ignore
@@ -508,6 +510,7 @@ class TrayScanner:
         save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
 
     def run_scan_cycle(self) -> None:
+        self.tray_number = 0
         print("Starting scan cycle.")
         self.home_x()
         self.home_y()
@@ -532,28 +535,55 @@ class TrayScanner:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run one 8-tray scan cycle.")
+    parser = argparse.ArgumentParser(description="Run 8-tray scan cycles every hour.")
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
-        help="Folder for captured images. Defaults to scan_images/run_<timestamp>.",
+        help="Base folder for captured images. Defaults to scan_images.",
+    )
+    parser.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=SCAN_INTERVAL_SECONDS,
+        help="Seconds between scan starts. Defaults to 3600.",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one scan cycle and exit.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = args.output_dir or Path("scan_images") / f"run_{run_timestamp}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    base_output_dir = args.output_dir or Path("scan_images")
+    base_output_dir.mkdir(parents=True, exist_ok=True)
 
     setup_gpio()
-    scanner = TrayScanner(output_dir)
-    print(f"Saving images to: {output_dir.resolve()}")
+    scanner = TrayScanner(base_output_dir)
+    print(f"Saving scan runs under: {base_output_dir.resolve()}")
 
     try:
-        scanner.run_scan_cycle()
+        while True:
+            cycle_started = time.monotonic()
+            run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            scanner.output_dir = base_output_dir / f"run_{run_timestamp}"
+            scanner.output_dir.mkdir(parents=True, exist_ok=True)
+
+            print(f"\nSaving this scan to: {scanner.output_dir.resolve()}")
+            scanner.run_scan_cycle()
+
+            if args.once:
+                break
+
+            elapsed = time.monotonic() - cycle_started
+            sleep_seconds = max(0.0, args.interval_seconds - elapsed)
+            next_run = datetime.now().timestamp() + sleep_seconds
+            next_run_text = datetime.fromtimestamp(next_run).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"Next scan starts at approximately {next_run_text}.")
+            time.sleep(sleep_seconds)
     except KeyboardInterrupt:
         print("\nScan interrupted by user.")
     except Exception as exc:
