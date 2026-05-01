@@ -30,7 +30,7 @@ import argparse
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 
 # -------- Pin mapping (BCM numbering) --------
@@ -40,9 +40,6 @@ M1_DIR = 24
 
 M2_DIR = 14
 M2_PUL = 15
-
-X_HOME_SWITCH = 19
-Y_HOME_SWITCH = 26
 
 
 # -------- Motion parameters --------
@@ -90,10 +87,6 @@ except ModuleNotFoundError:
             return None
 
         @staticmethod
-        def input(_pin: int) -> int:
-            return 0
-
-        @staticmethod
         def cleanup() -> None:
             return None
 
@@ -135,10 +128,6 @@ def step_pulses(pul_pin: int, steps: int, pulse_us: int = PULSE_US, gap_us: int 
         time.sleep(gap_us / 1_000_000)
 
 
-def limit_triggered(pin: int) -> bool:
-    return GPIO.input(pin) == LIMIT_TRIGGERED_STATE
-
-
 def setup_gpio() -> None:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
@@ -147,10 +136,6 @@ def setup_gpio() -> None:
         hi_z(pin)
 
     # Limit-switch setup is intentionally omitted while homing is disabled.
-
-
-class MotionSafetyError(RuntimeError):
-    """Raised when motion must stop because a limit switch or homing check failed."""
 
 
 class CameraSource:
@@ -370,118 +355,17 @@ class TrayScanner:
         self.realsense_camera.stop()
         self.rpi_camera.stop()
 
-    def _axis_pins(self, axis: str) -> Tuple[int, int, int]:
-        if axis == "x":
-            return M1_PUL, M1_DIR, X_HOME_SWITCH
-        if axis == "y":
-            return M2_PUL, M2_DIR, Y_HOME_SWITCH
-        raise ValueError("Axis must be 'x' or 'y'.")
-
-    def _step_axis_monitored(
-        self,
-        axis: str,
-        steps: int,
-        direction: str,
-        *,
-        stop_on_home: bool,
-        allow_initial_home_clear: bool = False,
-    ) -> int:
-        pul_pin, dir_pin, switch_pin = self._axis_pins(axis)
-        other_axis = "y" if axis == "x" else "x"
-        _, _, other_switch_pin = self._axis_pins(other_axis)
-        set_dir(dir_pin, direction)
-
-        clearing_initial_home_switch = allow_initial_home_clear and not stop_on_home
-        release_clear_count = 0
-        other_switch_was_triggered = limit_triggered(other_switch_pin)
-        pulse_delay = PULSE_US / 1_000_000
-        gap_delay = GAP_US / 1_000_000
-
-        for completed_steps in range(steps):
-            switch_is_triggered = limit_triggered(switch_pin)
-            if limit_triggered(other_switch_pin) and not other_switch_was_triggered:
-                hi_z(pul_pin)
-                raise MotionSafetyError(
-                    f"{other_axis.upper()} home switch triggered unexpectedly during {axis.upper()} move."
-                )
-
-            if stop_on_home and switch_is_triggered:
-                hi_z(pul_pin)
-                return completed_steps
-
-            if not stop_on_home:
-                if clearing_initial_home_switch:
-                    if switch_is_triggered:
-                        release_clear_count = 0
-                        if completed_steps >= HOME_SWITCH_CLEARANCE_MAX_STEPS:
-                            hi_z(pul_pin)
-                            raise MotionSafetyError(
-                                f"{axis.upper()} home switch did not release within "
-                                f"{HOME_SWITCH_CLEARANCE_MAX_STEPS} steps while moving away."
-                            )
-                    else:
-                        release_clear_count += 1
-                        if release_clear_count >= HOME_SWITCH_RELEASE_DEBOUNCE_STEPS:
-                            clearing_initial_home_switch = False
-                elif switch_is_triggered:
-                    hi_z(pul_pin)
-                    raise MotionSafetyError(
-                        f"{axis.upper()} home switch triggered unexpectedly during move."
-                    )
-
-            drive_low(pul_pin)
-            time.sleep(pulse_delay)
-            hi_z(pul_pin)
-            time.sleep(gap_delay)
-
-        if stop_on_home and limit_triggered(switch_pin):
-            return steps
-
-        if stop_on_home:
-            hi_z(pul_pin)
-            raise MotionSafetyError(
-                f"{axis.upper()} homing failed: switch did not trigger within {steps} steps."
-            )
-
-        return steps
-
     def move_x_steps(self, steps: int) -> None:
         direction = AWAY_FROM_HOME_DIRECTION if steps >= 0 else HOME_DIRECTION
         print(f"Moving X {abs(steps)} steps {direction}")
         set_dir(M1_DIR, direction)
         step_pulses(M1_PUL, abs(steps))
 
-    def move_y_steps(self, steps: int, *, stop_on_home: bool = False) -> None:
+    def move_y_steps(self, steps: int) -> None:
         direction = AWAY_FROM_HOME_DIRECTION if steps >= 0 else HOME_DIRECTION
         print(f"Moving Y {abs(steps)} steps {direction}")
         set_dir(M2_DIR, direction)
         step_pulses(M2_PUL, abs(steps))
-
-    def home_x(self) -> None:
-        print("Homing X...")
-        if limit_triggered(X_HOME_SWITCH):
-            print("X already home.")
-            return
-        steps = self._step_axis_monitored(
-            "x",
-            X_HOME_MAX_STEPS,
-            HOME_DIRECTION,
-            stop_on_home=True,
-        )
-        print(f"X homed after {steps} steps.")
-
-    def home_y(self) -> None:
-        print("Homing Y...")
-        if limit_triggered(Y_HOME_SWITCH):
-            print("Y already home.")
-            return
-        steps = self._step_axis_monitored(
-            "y",
-            Y_HOME_MAX_STEPS,
-            HOME_DIRECTION,
-            stop_on_home=True,
-        )
-        print(f"Y homed after {steps} steps.")
 
     def scan_tray(self, x_index: int, y_index: int) -> None:
         self.tray_number += 1
