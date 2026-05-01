@@ -48,6 +48,8 @@ Y_HOME_SWITCH = 26
 # -------- Motion parameters --------
 PULSE_US = 5
 GAP_US = 20
+M2_PULSE_US = 5
+M2_GAP_US = 10
 
 X_STEPS_PER_TRAY = 75_000
 Y_STEPS_BETWEEN_TRAYS = 465_000
@@ -393,6 +395,13 @@ class TrayScanner:
             return M2_PUL, M2_DIR, Y_HOME_SWITCH
         raise ValueError("Axis must be 'x' or 'y'.")
 
+    def _axis_timing_us(self, axis: str) -> Tuple[int, int]:
+        if axis == "x":
+            return PULSE_US, GAP_US
+        if axis == "y":
+            return M2_PULSE_US, M2_GAP_US
+        raise ValueError("Axis must be 'x' or 'y'.")
+
     def _step_axis_monitored(
         self,
         axis: str,
@@ -410,8 +419,9 @@ class TrayScanner:
         clearing_initial_home_switch = allow_initial_home_clear and not stop_on_home
         release_clear_count = 0
         other_switch_was_triggered = limit_triggered(other_switch_pin)
-        pulse_delay = PULSE_US / 1_000_000
-        gap_delay = GAP_US / 1_000_000
+        pulse_us, gap_us = self._axis_timing_us(axis)
+        pulse_delay = pulse_us / 1_000_000
+        gap_delay = gap_us / 1_000_000
 
         for completed_steps in range(steps):
             switch_is_triggered = limit_triggered(switch_pin)
