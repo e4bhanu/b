@@ -32,7 +32,7 @@ The project will now begin with an early preparation phase from September 2026. 
 
 The main Swinburne research project will commence on 1 January 2027 and focus on data validation, AI model development, performance evaluation, and prototype handover. The visual data will preferably include RGB plus depth or stereo imagery captured as cattle attend drink stations. Each usable visual observation will be paired with reference liveweight data from the weighing system selected by DIT AgTech.
 
-DIT AgTech has indicated that the liveweight data will be collected using the Agscent Air system integrated with Optiweigh automatic weighing technology. The Agscent Air product information describes an integrated methane and liveweight system that captures individual animal ID, methane and CO2 readings, and liveweight data automatically. DIT AgTech has advised that the expected liveweight accuracy of this weighing reference is approximately 95-97%. The AI model's accuracy must therefore be interpreted relative to the accuracy and uncertainty of that reference data, not as an absolute measurement beyond the precision of the weighing system itself.
+DIT AgTech has indicated that the liveweight data will be collected using Optiweigh automatic weighing technology. Optiweigh describes its system as a portable, self-contained livestock weighing unit that can be placed in a paddock or feedlot, records animal EID and front-foot weight when cattle step onto the platform, and sends the data to the cloud where algorithms calculate whole-body liveweight. DIT AgTech has advised that the expected liveweight accuracy of this weighing reference is approximately 95-97%. The AI model's accuracy must therefore be interpreted relative to the accuracy and uncertainty of that reference data, not as an absolute measurement beyond the precision of the weighing system itself.
 
 ## 2. Expected Outcomes
 
@@ -40,11 +40,11 @@ The project is expected to deliver the following outcomes:
 
 - Research assistant preparation report covering camera options, recommended sensor configuration, mounting position, capture geometry, calibration requirements, and field data collection workflow.
 - A data collection specification for DIT AgTech, including recommended RGB/depth or stereo setup, drink-station geometry, trigger logic, metadata fields, and quality acceptance criteria.
-- A structured protocol for pairing cattle images or short video snippets with Agscent Air/Optiweigh reference liveweight readings.
+- A structured protocol for pairing cattle images or short video snippets with Optiweigh reference liveweight readings.
 - A curated training and evaluation dataset assembled from DIT AgTech data batches, with quality labels indicating visibility, occlusion, lighting condition, depth validity, and suitability for model training.
 - A trained AI model or model family for beef cattle liveweight estimation from camera vision data captured at drink stations.
 - A prototype inference software pipeline that takes camera observations as input and returns estimated liveweight, confidence or uncertainty information, and quality-control flags.
-- A performance evaluation report covering model error relative to the Agscent Air/Optiweigh liveweight reference, repeatability, subgroup bias, robustness to field conditions, and progress against the agreed target accuracy framework.
+- A performance evaluation report covering model error relative to the Optiweigh liveweight reference, repeatability, subgroup bias, robustness to field conditions, and progress against the agreed target accuracy framework.
 - A technical integration specification for future connection to DIT AgTech's Nevil AI platform, including expected inputs, outputs, metadata, confidence thresholds, and suggested API structure.
 - A final technical report documenting the method, data assumptions, model architecture, experimental results, limitations, and recommended next development phase.
 
@@ -54,7 +54,7 @@ These outcomes will give DIT AgTech a research-validated foundation for camera-b
 
 ### 3.1 System Architecture - Visual Liveweight Estimation Pipeline
 
-The proposed system is built around supervised learning from paired visual observations and reference liveweight data. Each training example should represent a known animal observation at or near a drink station, with synchronised camera data and a corresponding liveweight record from the Agscent Air/Optiweigh system or other confirmed DIT AgTech weighing reference.
+The proposed system is built around supervised learning from paired visual observations and reference liveweight data. Each training example should represent a known animal observation at or near a drink station, with synchronised camera data and a corresponding liveweight record from the Optiweigh system or other confirmed DIT AgTech weighing reference.
 
 ### 3.1.1 Preparatory Camera and Capture Design
 
@@ -146,7 +146,7 @@ Each training observation should include, where available:
 
 - RGB image or short RGB video snippet.
 - Depth map, stereo pair, or calibrated 3D information.
-- Reference liveweight from the Agscent Air/Optiweigh system.
+- Reference liveweight from the Optiweigh system.
 - Timestamp for image capture.
 - Timestamp for weight measurement.
 - Animal ID, preferably RFID or another persistent identifier.
@@ -177,7 +177,7 @@ These figures are not hard minimums, but they reflect the likely scale needed fo
 
 ### 3.3 Annotation, Quality Assurance, and Dataset Governance
 
-The Agscent Air/Optiweigh liveweight record will be treated as the reference label for model training. However, the dataset still requires quality assurance. Swinburne will define rules for accepting or rejecting observations, including:
+The Optiweigh liveweight record will be treated as the reference label for model training. However, the dataset still requires quality assurance. Swinburne will define rules for accepting or rejecting observations, including:
 
 - Valid liveweight reading present.
 - Image and liveweight timestamps are sufficiently close.
@@ -204,7 +204,7 @@ The following metrics will be tracked:
 - Prediction confidence calibration.
 - Rejection rate for low-quality observations.
 
-The model will be developed iteratively. Model accuracy will be reported against the available Agscent Air/Optiweigh reference liveweight data, whose expected accuracy has been advised as approximately 95-97%. If independent yard-scale validation data is available, it can be used to separately assess the combined uncertainty of the weighing reference and vision model.
+The model will be developed iteratively. Model accuracy will be reported against the available Optiweigh reference liveweight data, whose expected accuracy has been advised as approximately 95-97%. If independent yard-scale validation data is available, it can be used to separately assess the combined uncertainty of the weighing reference and vision model.
 
 ## 4. Scope Boundaries
 
@@ -233,7 +233,7 @@ The appropriate handoff point for this project is a validated method, trained mo
 
 DIT AgTech has expressed interest in AI-powered cattle weight estimation targeting 95% accuracy. Because this is a research project and the field data has not yet been collected, the proposal treats 95% as an aspirational performance objective rather than a guaranteed commitment at project commencement.
 
-The project will first establish a measurement framework, then set formal numerical targets after Batch 1 data is available and the first baseline model has been evaluated. Targets will be defined relative to the Agscent Air/Optiweigh liveweight reference used for training and evaluation. Since DIT AgTech has advised the weighing reference accuracy is approximately 95-97%, the model's measured accuracy should be interpreted within that reference uncertainty.
+The project will first establish a measurement framework, then set formal numerical targets after Batch 1 data is available and the first baseline model has been evaluated. Targets will be defined relative to the Optiweigh liveweight reference used for training and evaluation. Since DIT AgTech has advised the weighing reference accuracy is approximately 95-97%, the model's measured accuracy should be interpreted within that reference uncertainty.
 
 | Metric | What It Measures | Target Setting |
 | --- | --- | --- |
@@ -269,7 +269,7 @@ Due: 31 October 2026
 
 - Research assistant reviews suitable RGB, RGB-depth, and stereo camera options.
 - Drink-station camera positions, mounting geometry, and likely field-of-view requirements identified.
-- Synchronisation requirements for camera data, animal ID, station event logs, and Agscent Air/Optiweigh liveweight records defined.
+- Synchronisation requirements for camera data, animal ID, station event logs, and Optiweigh liveweight records defined.
 - Initial calibration and data quality requirements documented.
 - Data collection guide delivered to DIT AgTech so DIT can acquire equipment and begin data collection.
 
@@ -334,7 +334,7 @@ Due: 31 December 2027
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Insufficient paired image and liveweight data | Medium | High | Provide camera and data guide before full collection; ingest data in batches; report quality gaps quickly; prioritise high-quality paired observations over raw volume. |
-| Reference liveweight accuracy limits model evaluation | Medium | High | Report model accuracy relative to Agscent Air/Optiweigh reference data; document the advised 95-97% reference accuracy; use independent yard-scale validation if available. |
+| Reference liveweight accuracy limits model evaluation | Medium | High | Report model accuracy relative to Optiweigh reference data; document the advised 95-97% reference accuracy; use independent yard-scale validation if available. |
 | Incorrect matching between images and reference liveweights | Medium | High | Require timestamp synchronisation, animal ID where possible, station event logs, and validation checks for impossible or inconsistent records. |
 | Drink-station crowding or occlusion prevents full body visibility | High | High | Use the preparation phase to select camera placement and trigger rules; use quality gating; collect multiple observations per animal; reject low-confidence images. |
 | Outdoor lighting, glare, dust, rain, or mud reduces image quality | Medium | Medium | Include environmental diversity in data collection; use image augmentation; specify camera protection and cleaning requirements; monitor quality flags. |
@@ -384,7 +384,7 @@ DIT AgTech will be responsible for:
 
 - Field access and operational context.
 - Acquisition and installation of agreed camera hardware.
-- Operation of the Agscent Air/Optiweigh or other confirmed weighing reference system.
+- Operation of the Optiweigh or other confirmed weighing reference system.
 - Collection and transfer of paired image/depth and liveweight data.
 - Providing Nevil integration requirements.
 - Reviewing milestones and providing domain feedback.
