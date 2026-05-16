@@ -27,8 +27,9 @@ Run on the Raspberry Pi with:
 from __future__ import annotations
 
 import argparse
+import os
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -76,6 +77,12 @@ HOME_SWITCH_RELEASE_DEBOUNCE_STEPS = 50
 HOME_SWITCH_CLEARANCE_MAX_STEPS = 50_000
 
 SCAN_INTERVAL_SECONDS = 60 * 60
+
+LIGHT_ON_HOUR = 7
+LIGHT_OFF_HOUR = 21
+LIGHT_INITIAL_OFF_DAYS = 4
+LIGHT_SETTLE_SECONDS = 2.0
+LIGHT_SCHEDULE_CHECK_SECONDS = 60.0
 
 
 try:
@@ -377,9 +384,156 @@ def save_rgb_ppm(frame, path: Path) -> None:
     path.write_bytes(header + data)
 
 
+class TapoLightController:
+    """Controls a TP-Link Tapo P100 smart plug for capture lighting."""
+
+    def __init__(
+        self,
+        host: Optional[str],
+        username: Optional[str],
+        password: Optional[str],
+        *,
+        collection_start_date: date,
+        initial_off_days: int = LIGHT_INITIAL_OFF_DAYS,
+        on_hour: int = LIGHT_ON_HOUR,
+        off_hour: int = LIGHT_OFF_HOUR,
+        settle_seconds: float = LIGHT_SETTLE_SECONDS,
+        enabled: bool = True,
+    ) -> None:
+        self.host = host
+        self.username = username
+        self.password = password
+        self.collection_start_date = collection_start_date
+        self.initial_off_days = initial_off_days
+        self.on_hour = on_hour
+        self.off_hour = off_hour
+        self.settle_seconds = settle_seconds
+        self.enabled = enabled and bool(host)
+        self._plug = None
+        self._temporary_light_on = False
+
+        if enabled and any((host, username, password)) and not all((host, username, password)):
+            raise ValueError(
+                "Tapo light control needs host, username, and password. "
+                "Use --tapo-host/--tapo-username/--tapo-password or TAPO_HOST/TAPO_USERNAME/TAPO_PASSWORD."
+            )
+
+    def _desired_on_now(self, now: Optional[datetime] = None) -> bool:
+        now = now or datetime.now()
+        initial_off_until = self.collection_start_date.toordinal() + self.initial_off_days
+        if now.date().toordinal() < initial_off_until:
+            return False
+        return self.on_hour <= now.hour < self.off_hour
+
+    def _ensure_connected(self) -> None:
+        if self._plug is not None:
+            return
+        if not self.enabled:
+            return
+        try:
+            from PyP100 import PyP100  # type: ignore
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Tapo P100 light control needs PyP100. Install it on the Raspberry Pi with: "
+                "python3 -m pip install PyP100"
+            ) from exc
+
+        self._plug = PyP100.P100(self.host, self.username, self.password)
+        self._plug.handshake()
+        self._plug.login()
+
+    def _call_plug(self, method_name: str):
+        self._ensure_connected()
+        if self._plug is None:
+            return None
+        method = getattr(self._plug, method_name)
+        try:
+            return method()
+        except Exception:
+            self._plug = None
+            self._ensure_connected()
+            if self._plug is None:
+                return None
+            return getattr(self._plug, method_name)()
+
+    def is_on(self) -> bool:
+        if not self.enabled:
+            return False
+        info = self._call_plug("getDeviceInfo")
+        if not isinstance(info, dict):
+            raise RuntimeError("Tapo P100 did not return device status.")
+        result = info.get("result")
+        if isinstance(result, dict) and "device_on" in result:
+            return bool(result["device_on"])
+        if "device_on" in info:
+            return bool(info["device_on"])
+        raise RuntimeError(f"Tapo P100 status did not include device_on: {info}")
+
+    def turn_on(self) -> None:
+        if self.enabled:
+            print("Turning lights on.")
+            self._call_plug("turnOn")
+
+    def turn_off(self) -> None:
+        if self.enabled:
+            print("Turning lights off.")
+            self._call_plug("turnOff")
+
+    def maintain_schedule(self) -> None:
+        if not self.enabled:
+            return
+        should_be_on = self._desired_on_now()
+        currently_on = self.is_on()
+        if should_be_on and not currently_on:
+            self.turn_on()
+        elif not should_be_on and currently_on:
+            self.turn_off()
+
+    def prepare_for_capture(self) -> None:
+        if not self.enabled:
+            return
+
+        if self.is_on():
+            self._temporary_light_on = False
+            return
+
+        self.turn_on()
+        self._temporary_light_on = not self._desired_on_now()
+        if self.settle_seconds > 0:
+            time.sleep(self.settle_seconds)
+
+    def finish_capture(self) -> None:
+        if self.enabled and self._temporary_light_on:
+            self.turn_off()
+        self._temporary_light_on = False
+
+
+def parse_collection_start_date(value: Optional[str]) -> date:
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
+
+
+def sleep_with_light_schedule(
+    seconds: float,
+    light_controller: TapoLightController,
+    check_seconds: float = LIGHT_SCHEDULE_CHECK_SECONDS,
+) -> None:
+    end_time = time.monotonic() + seconds
+    check_seconds = max(1.0, check_seconds)
+    light_controller.maintain_schedule()
+    while True:
+        remaining = end_time - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, check_seconds))
+        light_controller.maintain_schedule()
+
+
 class TrayScanner:
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, light_controller: Optional[TapoLightController] = None) -> None:
         self.output_dir = output_dir
+        self.light_controller = light_controller
         self.rpi_camera = CameraSource()
         self.realsense_camera = RealSenseCamera()
         self.tray_number = 0
@@ -525,15 +679,21 @@ class TrayScanner:
         name_prefix = f"tray{self.tray_number:02d}_x{x_index}_y{y_index}_{timestamp}"
         print(f"Capturing Tray {self.tray_number}: X{x_index}, Y{y_index}")
 
-        rpi_frame = self.rpi_camera.read_rgb_frame()
-        if rpi_frame is None:
-            raise RuntimeError("RPi camera did not return an image.")
+        if self.light_controller is not None:
+            self.light_controller.prepare_for_capture()
+        try:
+            rpi_frame = self.rpi_camera.read_rgb_frame()
+            if rpi_frame is None:
+                raise RuntimeError("RPi camera did not return an image.")
 
-        realsense_rgb, realsense_depth = self.realsense_camera.capture_rgb_and_depth()
+            realsense_rgb, realsense_depth = self.realsense_camera.capture_rgb_and_depth()
 
-        save_rgb_ppm(rpi_frame, self.output_dir / f"{name_prefix}_rpi_rgb.ppm")
-        save_rgb_ppm(realsense_rgb, self.output_dir / f"{name_prefix}_realsense_rgb.ppm")
-        save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
+            save_rgb_ppm(rpi_frame, self.output_dir / f"{name_prefix}_rpi_rgb.ppm")
+            save_rgb_ppm(realsense_rgb, self.output_dir / f"{name_prefix}_realsense_rgb.ppm")
+            save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
+        finally:
+            if self.light_controller is not None:
+                self.light_controller.finish_capture()
 
     def run_scan_cycle(self) -> None:
         self.tray_number = 0
@@ -584,6 +744,46 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run one scan cycle and exit.",
     )
+    parser.add_argument(
+        "--tapo-host",
+        default=os.environ.get("TAPO_HOST"),
+        help="Tapo P100 IP address or hostname. Can also be set with TAPO_HOST.",
+    )
+    parser.add_argument(
+        "--tapo-username",
+        default=os.environ.get("TAPO_USERNAME"),
+        help="Tapo account username/email. Can also be set with TAPO_USERNAME.",
+    )
+    parser.add_argument(
+        "--tapo-password",
+        default=os.environ.get("TAPO_PASSWORD"),
+        help="Tapo account password. Can also be set with TAPO_PASSWORD.",
+    )
+    parser.add_argument(
+        "--collection-start-date",
+        default=os.environ.get("COLLECTION_START_DATE"),
+        help=(
+            "Data collection start date as YYYY-MM-DD. Lights stay off by default "
+            "for the first 4 days. Defaults to today if omitted."
+        ),
+    )
+    parser.add_argument(
+        "--no-light-control",
+        action="store_true",
+        help="Disable Tapo light control even if Tapo settings are provided.",
+    )
+    parser.add_argument(
+        "--light-settle-seconds",
+        type=float,
+        default=LIGHT_SETTLE_SECONDS,
+        help="Seconds to wait after temporarily switching lights on before capturing.",
+    )
+    parser.add_argument(
+        "--light-schedule-check-seconds",
+        type=float,
+        default=LIGHT_SCHEDULE_CHECK_SECONDS,
+        help="How often to enforce the 7am-9pm light schedule while waiting between scans.",
+    )
     return parser.parse_args()
 
 
@@ -593,7 +793,25 @@ def main() -> None:
     base_output_dir.mkdir(parents=True, exist_ok=True)
 
     setup_gpio()
-    scanner = TrayScanner(base_output_dir)
+    collection_start_date = parse_collection_start_date(args.collection_start_date)
+    light_controller = TapoLightController(
+        args.tapo_host,
+        args.tapo_username,
+        args.tapo_password,
+        collection_start_date=collection_start_date,
+        settle_seconds=args.light_settle_seconds,
+        enabled=not args.no_light_control,
+    )
+    if light_controller.enabled:
+        print(
+            "Light control enabled: lights are off by default for the first "
+            f"{LIGHT_INITIAL_OFF_DAYS} days from {collection_start_date.isoformat()}, "
+            f"then on from {LIGHT_ON_HOUR:02d}:00 to {LIGHT_OFF_HOUR:02d}:00."
+        )
+    else:
+        print("Light control disabled. Provide --tapo-host, --tapo-username, and --tapo-password to enable it.")
+
+    scanner = TrayScanner(base_output_dir, light_controller=light_controller)
     print(f"Saving scan runs under: {base_output_dir.resolve()}")
 
     try:
@@ -614,7 +832,11 @@ def main() -> None:
             next_run = datetime.now().timestamp() + sleep_seconds
             next_run_text = datetime.fromtimestamp(next_run).strftime("%Y-%m-%d %H:%M:%S")
             print(f"Next scan starts at approximately {next_run_text}.")
-            time.sleep(sleep_seconds)
+            sleep_with_light_schedule(
+                sleep_seconds,
+                light_controller,
+                check_seconds=args.light_schedule_check_seconds,
+            )
     except KeyboardInterrupt:
         print("\nScan interrupted by user.")
     except Exception as exc:
