@@ -434,8 +434,11 @@ class TapoLightController:
             from PyP100 import PyP100  # type: ignore
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Tapo P100 light control needs PyP100. Install it on the Raspberry Pi with: "
-                "python3 -m pip install PyP100"
+                "Tapo P100 light control needs PyP100. On Raspberry Pi OS, install it in a "
+                "virtual environment to avoid the externally-managed-environment error:\n"
+                "  python3 -m venv --system-site-packages .venv\n"
+                "  . .venv/bin/activate\n"
+                "  python3 -m pip install -r requirements.txt"
             ) from exc
 
         self._plug = PyP100.P100(self.host, self.username, self.password)
