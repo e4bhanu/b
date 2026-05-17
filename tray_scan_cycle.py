@@ -267,7 +267,7 @@ class CameraSource:
 
 
 class RealSenseCamera:
-    """Captures one RGB frame and one colorized depth frame from a RealSense camera."""
+    """Captures RGB, colorized depth, and raw depth frames from a RealSense camera."""
 
     def __init__(self, width: int = 640, height: int = 480, fps: int = 30) -> None:
         self.width = width
@@ -348,13 +348,14 @@ class RealSenseCamera:
             raise RuntimeError("RealSense did not return both RGB and depth frames.")
 
         rgb_frame = np.asanyarray(color_frame.get_data()).copy()
+        depth_raw_frame = np.asanyarray(depth_frame.get_data()).copy()
         depth_color_frame = self._colorizer.colorize(depth_frame)
         depth_frame_rgb = np.asanyarray(depth_color_frame.get_data()).copy()
 
         if depth_color_frame.get_profile().format() == rs.format.bgr8:
             depth_frame_rgb = depth_frame_rgb[:, :, ::-1]
 
-        return rgb_frame, depth_frame_rgb
+        return rgb_frame, depth_frame_rgb, depth_raw_frame
 
     def capture_rgb_and_depth(self):
         self._start()
@@ -382,6 +383,14 @@ def save_rgb_ppm(frame, path: Path) -> None:
         data = frame.tobytes()
 
     path.write_bytes(header + data)
+
+
+def save_raw_depth_npy(frame, path: Path) -> None:
+    """Save raw depth values with dtype and shape metadata for analysis."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np = __import__("numpy")
+    with path.open("wb") as output:
+        np.save(output, frame)
 
 
 class TapoLightController:
@@ -686,11 +695,17 @@ class TrayScanner:
             if rpi_frame is None:
                 raise RuntimeError("RPi camera did not return an image.")
 
-            realsense_rgb, realsense_depth = self.realsense_camera.capture_rgb_and_depth()
+            realsense_rgb, realsense_depth, realsense_depth_raw = (
+                self.realsense_camera.capture_rgb_and_depth()
+            )
 
             save_rgb_ppm(rpi_frame, self.output_dir / f"{name_prefix}_rpi_rgb.ppm")
             save_rgb_ppm(realsense_rgb, self.output_dir / f"{name_prefix}_realsense_rgb.ppm")
             save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
+            save_raw_depth_npy(
+                realsense_depth_raw,
+                self.output_dir / f"{name_prefix}_realsense_depth_raw.npy",
+            )
         finally:
             if self.light_controller is not None:
                 self.light_controller.finish_capture()
