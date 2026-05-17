@@ -766,27 +766,21 @@ class TrayScanner:
         name_prefix = f"tray{self.tray_number:02d}_x{x_index}_y{y_index}_{timestamp}"
         print(f"Capturing Tray {self.tray_number}: X{x_index}, Y{y_index}")
 
-        if self.light_controller is not None:
-            self.light_controller.prepare_for_capture()
-        try:
-            rpi_frame = self.rpi_camera.read_rgb_frame()
-            if rpi_frame is None:
-                raise RuntimeError("RPi camera did not return an image.")
+        rpi_frame = self.rpi_camera.read_rgb_frame()
+        if rpi_frame is None:
+            raise RuntimeError("RPi camera did not return an image.")
 
-            realsense_rgb, realsense_depth, realsense_depth_raw = (
-                self.realsense_camera.capture_rgb_and_depth()
-            )
+        realsense_rgb, realsense_depth, realsense_depth_raw = (
+            self.realsense_camera.capture_rgb_and_depth()
+        )
 
-            save_rgb_ppm(rpi_frame, self.output_dir / f"{name_prefix}_rpi_rgb.ppm")
-            save_rgb_ppm(realsense_rgb, self.output_dir / f"{name_prefix}_realsense_rgb.ppm")
-            save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
-            save_raw_depth_npy(
-                realsense_depth_raw,
-                self.output_dir / f"{name_prefix}_realsense_depth_raw.npy",
-            )
-        finally:
-            if self.light_controller is not None:
-                self.light_controller.finish_capture()
+        save_rgb_ppm(rpi_frame, self.output_dir / f"{name_prefix}_rpi_rgb.ppm")
+        save_rgb_ppm(realsense_rgb, self.output_dir / f"{name_prefix}_realsense_rgb.ppm")
+        save_rgb_ppm(realsense_depth, self.output_dir / f"{name_prefix}_realsense_depth.ppm")
+        save_raw_depth_npy(
+            realsense_depth_raw,
+            self.output_dir / f"{name_prefix}_realsense_depth_raw.npy",
+        )
 
     def run_scan_cycle(self) -> None:
         self.tray_number = 0
@@ -794,25 +788,34 @@ class TrayScanner:
         self.home_x()
         self.home_y()
 
-        self.scan_tray(0, 0)
-        for y_index in range(1, Y_ROWS):
-            self.move_y_steps(Y_STEPS_BETWEEN_TRAYS)
-            self.scan_tray(0, y_index)
+        if self.light_controller is not None:
+            self.light_controller.turn_on()
+            if self.light_controller.settle_seconds > 0:
+                time.sleep(self.light_controller.settle_seconds)
 
-        self.move_x_steps(X_STEPS_PER_TRAY)
-        self.scan_tray(1, Y_ROWS - 1)
+        try:
+            self.scan_tray(0, 0)
+            for y_index in range(1, Y_ROWS):
+                self.move_y_steps(Y_STEPS_BETWEEN_TRAYS)
+                self.scan_tray(0, y_index)
 
-        for y_index in range(Y_ROWS - 2, -1, -1):
-            if y_index == 0:
-                # The home switch can sit slightly past the nominal tray spacing.
-                # Use the configured homing allowance for the last Y move.
-                self.home_y()
-            else:
-                self.move_y_steps(-Y_STEPS_BETWEEN_TRAYS)
-            self.scan_tray(1, y_index)
+            self.move_x_steps(X_STEPS_PER_TRAY)
+            self.scan_tray(1, Y_ROWS - 1)
 
-        if not limit_triggered(Y_HOME_SWITCH):
-            raise MotionSafetyError("Y axis is not at home after the final tray.")
+            for y_index in range(Y_ROWS - 2, -1, -1):
+                if y_index == 0:
+                    # The home switch can sit slightly past the nominal tray spacing.
+                    # Use the configured homing allowance for the last Y move.
+                    self.home_y()
+                else:
+                    self.move_y_steps(-Y_STEPS_BETWEEN_TRAYS)
+                self.scan_tray(1, y_index)
+
+            if not limit_triggered(Y_HOME_SWITCH):
+                raise MotionSafetyError("Y axis is not at home after the final tray.")
+        finally:
+            if self.light_controller is not None:
+                self.light_controller.turn_off()
 
         self.home_x()
         print("Scan cycle complete.")
