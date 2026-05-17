@@ -27,6 +27,8 @@ Run on the Raspberry Pi with:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import inspect
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -422,13 +424,16 @@ class TapoLightController:
         self.off_hour = off_hour
         self.settle_seconds = settle_seconds
         self.enabled = enabled and bool(host)
-        self._plug = None
+        self._device = None
+        self._on_off = None
+        self._loop = None
         self._temporary_light_on = False
 
         if enabled and any((host, username, password)) and not all((host, username, password)):
             raise ValueError(
                 "Tapo light control needs host, username, and password. "
-                "Use --tapo-host/--tapo-username/--tapo-password or TAPO_HOST/TAPO_USERNAME/TAPO_PASSWORD."
+                "Use --tapo-host/--tapo-username/--tapo-password or "
+                "TAPO_HOST/TAPO_USERNAME/TAPO_PASSWORD."
             )
 
     def _desired_on_now(self, now: Optional[datetime] = None) -> bool:
@@ -438,59 +443,130 @@ class TapoLightController:
             return False
         return self.on_hour <= now.hour < self.off_hour
 
-    def _ensure_connected(self) -> None:
-        if self._plug is not None:
+    def _run_async(self, coroutine):
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop.run_until_complete(coroutine)
+
+    async def _ensure_connected(self) -> None:
+        if self._device is not None and self._on_off is not None:
             return
         if not self.enabled:
             return
         try:
-            from PyP100 import PyP100  # type: ignore
+            from plugp100.common.credentials import AuthCredential  # type: ignore
+            from plugp100.new.components.on_off_component import OnOffComponent  # type: ignore
+            from plugp100.new.device_factory import DeviceConnectConfiguration, connect  # type: ignore
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Tapo P100 light control needs PyP100. Install it on the Raspberry Pi with: "
-                "python3 -m pip install PyP100"
+                "Tapo P100 light control needs plugp100. Install it on the Raspberry Pi with: "
+                "python3 -m pip install plugp100"
             ) from exc
 
-        self._plug = PyP100.P100(self.host, self.username, self.password)
-        self._plug.handshake()
-        self._plug.login()
+        assert self.host is not None
+        assert self.username is not None
+        assert self.password is not None
 
-    def _call_plug(self, method_name: str):
-        self._ensure_connected()
-        if self._plug is None:
-            return None
-        method = getattr(self._plug, method_name)
+        credentials = AuthCredential(self.username.lower(), self.password)
+        config = DeviceConnectConfiguration(host=self.host, credentials=credentials)
+        device = await connect(config)
         try:
-            return method()
+            await device.update()
+            on_off = device.get_component(OnOffComponent)
+            if on_off is None:
+                raise RuntimeError("Tapo P100 OnOffComponent could not be loaded.")
         except Exception:
-            self._plug = None
-            self._ensure_connected()
-            if self._plug is None:
-                return None
-            return getattr(self._plug, method_name)()
+            await self._close_device(device)
+            raise
+
+        self._device = device
+        self._on_off = on_off
+
+    async def _close_device(self, device) -> None:
+        try:
+            client = getattr(device, "client", None)
+            close = getattr(client, "close", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+                return
+
+            session = getattr(device, "_client_session", None)
+            if session is not None:
+                result = session.close()
+                if inspect.isawaitable(result):
+                    await result
+        except Exception:
+            pass
+
+    async def _disconnect(self) -> None:
+        if self._device is not None:
+            await self._close_device(self._device)
+        self._device = None
+        self._on_off = None
+
+    async def _call_plug(self, operation: str):
+        await self._ensure_connected()
+        if self._device is None or self._on_off is None:
+            return None
+
+        if operation == "is_on":
+            await self._device.update()
+            raw_state = getattr(self._device, "raw_state", None)
+            if isinstance(raw_state, dict) and "device_on" in raw_state:
+                return bool(raw_state["device_on"])
+            raise RuntimeError(f"Tapo P100 status did not include device_on: {raw_state}")
+
+        if operation == "turn_on":
+            await self._on_off.turn_on()
+            return None
+
+        if operation == "turn_off":
+            await self._on_off.turn_off()
+            return None
+
+        raise ValueError(f"Unknown Tapo operation: {operation}")
+
+    def _run_plug_operation(self, operation: str):
+        if not self.enabled:
+            return None
+        try:
+            return self._run_async(self._call_plug(operation))
+        except Exception:
+            try:
+                self._run_async(self._disconnect())
+            except Exception:
+                self._device = None
+                self._on_off = None
+            return self._run_async(self._call_plug(operation))
 
     def is_on(self) -> bool:
         if not self.enabled:
             return False
-        info = self._call_plug("getDeviceInfo")
-        if not isinstance(info, dict):
-            raise RuntimeError("Tapo P100 did not return device status.")
-        result = info.get("result")
-        if isinstance(result, dict) and "device_on" in result:
-            return bool(result["device_on"])
-        if "device_on" in info:
-            return bool(info["device_on"])
-        raise RuntimeError(f"Tapo P100 status did not include device_on: {info}")
+        return bool(self._run_plug_operation("is_on"))
 
     def turn_on(self) -> None:
         if self.enabled:
             print("Turning lights on.")
-            self._call_plug("turnOn")
+            self._run_plug_operation("turn_on")
 
     def turn_off(self) -> None:
         if self.enabled:
             print("Turning lights off.")
-            self._call_plug("turnOff")
+            self._run_plug_operation("turn_off")
+
+    def close(self) -> None:
+        if self._loop is None:
+            return
+        try:
+            if not self._loop.is_closed():
+                self._run_async(self._disconnect())
+                self._loop.close()
+        finally:
+            self._loop = None
+            self._device = None
+            self._on_off = None
 
     def maintain_schedule(self) -> None:
         if not self.enabled:
@@ -802,13 +878,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tapo-host",
-        default=os.environ.get("TAPO_HOST"),
-        help="Tapo P100 IP address or hostname. Can also be set with TAPO_HOST.",
+        default=os.environ.get("TAPO_HOST") or os.environ.get("PLUG_IP"),
+        help="Tapo P100 IP address or hostname. Can also be set with TAPO_HOST or PLUG_IP.",
     )
     parser.add_argument(
         "--tapo-username",
-        default=os.environ.get("TAPO_USERNAME"),
-        help="Tapo account username/email. Can also be set with TAPO_USERNAME.",
+        default=os.environ.get("TAPO_USERNAME") or os.environ.get("TAPO_EMAIL"),
+        help="Tapo account username/email. Can also be set with TAPO_USERNAME or TAPO_EMAIL.",
     )
     parser.add_argument(
         "--tapo-password",
@@ -910,6 +986,7 @@ def main() -> None:
         raise
     finally:
         scanner.close()
+        light_controller.close()
         GPIO.cleanup()
         print("GPIO cleaned up.")
 
