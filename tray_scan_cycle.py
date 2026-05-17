@@ -87,7 +87,7 @@ FIRST_SCAN_START_TIME = None
 LIGHT_ON_HOUR = 7
 LIGHT_OFF_HOUR = 21
 LIGHT_INITIAL_OFF_DAYS = 4
-LIGHT_SETTLE_SECONDS = 2.0
+LIGHT_SETTLE_SECONDS = 5.0
 LIGHT_SCHEDULE_CHECK_SECONDS = 60.0
 DEFAULT_TAPO_HOST = "192.168.0.62"
 DEFAULT_TAPO_USERNAME = "e4bhanu@gmail.com"
@@ -824,6 +824,10 @@ class TrayScanner:
         if self.light_controller is not None:
             self.light_controller.turn_on()
             if self.light_controller.settle_seconds > 0:
+                print(
+                    "Waiting "
+                    f"{self.light_controller.settle_seconds:g} seconds for camera brightness to settle."
+                )
                 time.sleep(self.light_controller.settle_seconds)
 
         try:
@@ -919,7 +923,7 @@ def parse_args() -> argparse.Namespace:
         "--light-settle-seconds",
         type=float,
         default=LIGHT_SETTLE_SECONDS,
-        help="Seconds to wait after temporarily switching lights on before capturing.",
+        help="Seconds to wait after switching lights on before capturing. Defaults to 5.",
     )
     parser.add_argument(
         "--light-schedule-check-seconds",
