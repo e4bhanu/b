@@ -85,6 +85,8 @@ LIGHT_OFF_HOUR = 21
 LIGHT_INITIAL_OFF_DAYS = 4
 LIGHT_SETTLE_SECONDS = 2.0
 LIGHT_SCHEDULE_CHECK_SECONDS = 60.0
+DEFAULT_TAPO_HOST = "192.168.0.62"
+DEFAULT_TAPO_USERNAME = "e4bhanu@gmail.com"
 
 
 try:
@@ -837,13 +839,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tapo-host",
-        default=os.environ.get("TAPO_HOST") or os.environ.get("PLUG_IP"),
-        help="Tapo P100 IP address or hostname. Can also be set with TAPO_HOST or PLUG_IP.",
+        default=os.environ.get("TAPO_HOST") or os.environ.get("PLUG_IP") or DEFAULT_TAPO_HOST,
+        help=(
+            "Tapo P100 IP address or hostname. Can also be set with TAPO_HOST or PLUG_IP. "
+            f"Defaults to {DEFAULT_TAPO_HOST}."
+        ),
     )
     parser.add_argument(
         "--tapo-username",
-        default=os.environ.get("TAPO_USERNAME") or os.environ.get("TAPO_EMAIL"),
-        help="Tapo account username/email. Can also be set with TAPO_USERNAME or TAPO_EMAIL.",
+        default=os.environ.get("TAPO_USERNAME") or os.environ.get("TAPO_EMAIL") or DEFAULT_TAPO_USERNAME,
+        help=(
+            "Tapo account username/email. Can also be set with TAPO_USERNAME or TAPO_EMAIL. "
+            f"Defaults to {DEFAULT_TAPO_USERNAME}."
+        ),
     )
     parser.add_argument(
         "--tapo-password",
@@ -900,7 +908,7 @@ def main() -> None:
             f"then on from {LIGHT_ON_HOUR:02d}:00 to {LIGHT_OFF_HOUR:02d}:00."
         )
     else:
-        print("Light control disabled. Provide --tapo-host, --tapo-username, and --tapo-password to enable it.")
+        print("Light control disabled. Provide --tapo-password to enable it.")
 
     scanner = TrayScanner(base_output_dir, light_controller=light_controller)
     print(f"Saving scan runs under: {base_output_dir.resolve()}")
