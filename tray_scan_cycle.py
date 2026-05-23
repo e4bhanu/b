@@ -29,7 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -77,6 +77,10 @@ HOME_SWITCH_RELEASE_DEBOUNCE_STEPS = 50
 HOME_SWITCH_CLEARANCE_MAX_STEPS = 50_000
 
 SCAN_INTERVAL_SECONDS = 60 * 60
+# Optional first scan start time. Set to "HH:MM" or "HH:MM:SS" to wait until
+# that clock time before starting the first scan cycle. Leave as None to start
+# immediately.
+FIRST_SCAN_START_TIME = None
 
 LIGHT_ON_HOUR = 7
 LIGHT_OFF_HOUR = 21
@@ -523,6 +527,35 @@ def parse_collection_start_date(value: Optional[str]) -> date:
     return date.fromisoformat(value)
 
 
+def next_first_scan_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+
+    value = value.strip()
+    if not value:
+        return None
+
+    for time_format in ("%H:%M:%S", "%H:%M"):
+        try:
+            parsed_time = datetime.strptime(value, time_format)
+            break
+        except ValueError:
+            parsed_time = None
+    else:
+        raise ValueError("First scan start time must be HH:MM or HH:MM:SS.")
+
+    now = datetime.now()
+    first_scan_at = now.replace(
+        hour=parsed_time.hour,
+        minute=parsed_time.minute,
+        second=parsed_time.second,
+        microsecond=0,
+    )
+    if first_scan_at <= now:
+        first_scan_at += timedelta(days=1)
+    return first_scan_at
+
+
 def sleep_with_light_schedule(
     seconds: float,
     light_controller: TapoLightController,
@@ -755,6 +788,14 @@ def parse_args() -> argparse.Namespace:
         help="Seconds between scan starts. Defaults to 3600.",
     )
     parser.add_argument(
+        "--first-start-time",
+        default=os.environ.get("FIRST_SCAN_START_TIME") or FIRST_SCAN_START_TIME,
+        help=(
+            "Clock time for the first scan cycle as HH:MM or HH:MM:SS. "
+            "Can also be set with FIRST_SCAN_START_TIME. Defaults to starting immediately."
+        ),
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Run one scan cycle and exit.",
@@ -830,6 +871,16 @@ def main() -> None:
     print(f"Saving scan runs under: {base_output_dir.resolve()}")
 
     try:
+        first_scan_at = next_first_scan_datetime(args.first_start_time)
+        if first_scan_at is not None:
+            sleep_seconds = max(0.0, (first_scan_at - datetime.now()).total_seconds())
+            print(f"First scan starts at approximately {first_scan_at.strftime('%Y-%m-%d %H:%M:%S')}.")
+            sleep_with_light_schedule(
+                sleep_seconds,
+                light_controller,
+                check_seconds=args.light_schedule_check_seconds,
+            )
+
         while True:
             cycle_started = time.monotonic()
             run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
