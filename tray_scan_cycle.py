@@ -818,19 +818,20 @@ class TrayScanner:
     def run_scan_cycle(self) -> None:
         self.tray_number = 0
         print("Starting scan cycle.")
-        self.home_x()
-        self.home_y()
-
-        if self.light_controller is not None:
-            self.light_controller.turn_on()
-            if self.light_controller.settle_seconds > 0:
-                print(
-                    "Waiting "
-                    f"{self.light_controller.settle_seconds:g} seconds for camera brightness to settle."
-                )
-                time.sleep(self.light_controller.settle_seconds)
 
         try:
+            if self.light_controller is not None:
+                self.light_controller.turn_on()
+                if self.light_controller.settle_seconds > 0:
+                    print(
+                        "Waiting "
+                        f"{self.light_controller.settle_seconds:g} seconds for camera brightness to settle."
+                    )
+                    time.sleep(self.light_controller.settle_seconds)
+
+            self.home_x()
+            self.home_y()
+
             self.scan_tray(0, 0)
             for y_index in range(1, Y_ROWS):
                 self.move_y_steps(Y_STEPS_BETWEEN_TRAYS)
