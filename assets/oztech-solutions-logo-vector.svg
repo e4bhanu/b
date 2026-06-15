@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">OzTech Systems logo</title>
+  <desc id="desc">Vector recreation of the OzTech Systems logo with an Australia circuit mark, OzTech wordmark, and Systems subline.</desc>
+  <defs>
+    <linearGradient id="tealGradient" x1="520" y1="270" x2="1135" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00AFC7"/>
+      <stop offset="1" stop-color="#0099A8"/>
+    </linearGradient>
+    <style>
+      .navy { fill: #052B63; }
+      .teal { fill: #009EAB; }
+      .stroke-navy { stroke: #052B63; }
+      .stroke-teal { stroke: #009EAB; }
+      .stroke-orange { stroke: #FF8A00; }
+      .wordmark {
+        font-family: Montserrat, Inter, Avenir Next, Arial, sans-serif;
+        font-weight: 800;
+      }
+      .subline {
+        font-family: Montserrat, Inter, Avenir Next, Arial, sans-serif;
+        font-weight: 500;
+      }
+    </style>
+  </defs>
+
+  <rect width="1200" height="800" fill="#FFFFFF"/>
+
+  <g id="icon" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path
+      class="stroke-navy"
+      d="M165 330
+         C196 308 198 280 231 281
+         C249 256 266 263 288 260
+         C276 304 331 299 349 326
+         C361 288 361 238 373 246
+         C389 267 399 292 413 315
+         C427 337 459 358 454 394
+         C449 426 421 448 386 446
+         C354 445 350 433 341 419
+         C325 423 311 424 299 412
+         C270 415 243 437 220 438"
+      stroke-width="12"/>
+
+    <path
+      class="stroke-navy"
+      d="M174 466
+         C208 454 235 431 276 427
+         C298 424 314 440 326 443
+         C344 450 364 438 378 452"
+      stroke-width="12"/>
+
+    <path
+      class="stroke-orange"
+      d="M424 427 L442 391"
+      stroke-width="11"/>
+
+    <path
+      class="navy"
+      d="M365 477
+         C372 475 393 475 401 477
+         C406 479 407 484 403 490
+         L386 518
+         C381 526 374 526 369 518
+         L353 490
+         C349 483 352 478 365 477Z"/>
+
+    <g class="stroke-teal" stroke-width="8">
+      <path d="M86 344 H190 L234 388 H273"/>
+      <path d="M62 389 H145 L158 362 H195 L220 389 H259"/>
+      <circle cx="72" cy="344" r="11"/>
+      <circle cx="46" cy="389" r="11"/>
+    </g>
+
+    <g class="stroke-navy" stroke-width="8">
+      <path d="M64 438 H139 L169 410 H244"/>
+      <path d="M106 468 H136 L174 431 H211"/>
+      <circle cx="63" cy="438" r="11"/>
+      <circle cx="106" cy="468" r="11"/>
+    </g>
+
+    <path
+      class="stroke-teal"
+      d="M266 389
+         H280
+         L289 361
+         L304 424
+         L321 320
+         L337 433
+         L351 369
+         L363 408
+         L372 388
+         H445"
+      stroke-width="8"/>
+  </g>
+
+  <g id="wordmark">
+    <text class="wordmark navy" x="490" y="440" font-size="160" letter-spacing="-10">Oz</text>
+    <text class="wordmark" x="748" y="440" font-size="160" letter-spacing="-8" fill="url(#tealGradient)">Tech</text>
+
+    <line class="stroke-orange" x1="505" y1="493" x2="570" y2="493" stroke-width="6"/>
+    <text class="subline navy" x="604" y="512" font-size="56" letter-spacing="28">Systems</text>
+    <line class="stroke-orange" x1="1082" y1="493" x2="1150" y2="493" stroke-width="6"/>
+  </g>
+</svg>
