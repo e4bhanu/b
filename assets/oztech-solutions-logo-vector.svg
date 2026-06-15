@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
-  <title id="title">OzTech Solutions logo</title>
-  <desc id="desc">Vector recreation of the generated OzTech Solutions logo with an Australia circuit mark, OzTech wordmark, and Solutions subline.</desc>
+  <title id="title">OzTech Systems logo</title>
+  <desc id="desc">Vector recreation of the OzTech Systems logo with an Australia circuit mark, OzTech wordmark, and Systems subline.</desc>
   <defs>
     <linearGradient id="tealGradient" x1="520" y1="270" x2="1135" y2="270" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#00AFC7"/>
@@ -98,7 +98,7 @@
     <text class="wordmark" x="748" y="440" font-size="160" letter-spacing="-8" fill="url(#tealGradient)">Tech</text>
 
     <line class="stroke-orange" x1="505" y1="493" x2="570" y2="493" stroke-width="6"/>
-    <text class="subline navy" x="604" y="512" font-size="56" letter-spacing="28">Solutions</text>
+    <text class="subline navy" x="604" y="512" font-size="56" letter-spacing="28">Systems</text>
     <line class="stroke-orange" x1="1082" y1="493" x2="1150" y2="493" stroke-width="6"/>
   </g>
 </svg>
